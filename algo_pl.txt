@@ -1,0 +1,128 @@
+Imports et Initialisation
+
+python
+
+import pulp
+from .models import Entite, Salle
+from datetime import time
+
+    import pulp : Importe la bibliothèque PuLP qui est utilisée pour modéliser et résoudre des problèmes de programmation linéaire.
+    from .models import Entite, Salle : Importe les modèles Entite et Salle qui contiennent les données nécessaires pour l'affectation.
+    from datetime import time : Importation de la classe time pour manipuler les heures si nécessaire, bien que dans ce code, elle ne soit pas utilisée explicitement.
+
+Fonction Principale
+
+python
+
+def lancer_algo_affectation():
+
+    def lancer_algo_affectation() : Définit une fonction qui va exécuter l'algorithme d'affectation des salles.
+
+Récupération des Données
+
+python
+
+    demandes = Entite.objects.all()
+    salles = Salle.objects.all()
+
+    demandes : Récupère toutes les entités qui ont demandé des salles.
+    salles : Récupère toutes les salles disponibles.
+
+Définition du Modèle de Programmation Linéaire
+
+python
+
+    model = pulp.LpProblem("Affectation_Salles", pulp.LpMinimize)
+
+    model : Crée un problème de programmation linéaire nommé "Affectation_Salles", spécifiant que l'objectif est de minimiser (pulp.LpMinimize).
+
+Variables de Décision
+
+python
+
+    x = pulp.LpVariable.dicts("x", 
+                              ((demande.id, salle.id) for demande in demandes for salle in salles), 
+                              cat="Binary")
+
+    x : Crée un dictionnaire de variables de décision. Chaque variable x[(demande.id, salle.id)] est binaire (0 ou 1), indiquant si la salle salle.id est assignée à l'entité demande.id (1 si assignée, 0 sinon).
+
+Fonction Objectif
+
+python
+
+    model += pulp.lpSum(((salle.capacite_max - demande.effectif) - demande.priorite) * x[(demande.id, salle.id)]
+                        for demande in demandes for salle in salles if salle.capacite_max >= demande.effectif)
+
+    Fonction Objectif : Le modèle cherche à minimiser les espaces non utilisés dans les salles, tout en tenant compte des priorités des demandes.
+        salle.capacite_max - demande.effectif calcule l'espace non utilisé si la salle est attribuée à l'entité.
+        demande.priorite est soustraite pour favoriser les entités avec une priorité plus élevée.
+        La somme est effectuée pour toutes les demandes et salles valides (où la salle peut accueillir l'effectif demandé).
+
+Contraintes
+
+    Contrainte 1 : Une Entité par Salle
+
+python
+
+    for demande in demandes:
+        model += pulp.lpSum(x[(demande.id, salle.id)] for salle in salles) == 1
+
+    Chaque entité doit être assignée à exactement une salle.
+
+    Contrainte 2 : Salle Unique par Créneau
+
+python
+
+    for salle in salles:
+        for demande1 in demandes:
+            for demande2 in demandes:
+                if demande1 != demande2:
+                    if (demande1.heure_debut < demande2.heure_fin and demande1.heure_fin > demande2.heure_debut):
+                        model += x[(demande1.id, salle.id)] + x[(demande2.id, salle.id)] <= 1
+
+    Cette contrainte empêche deux entités de se voir attribuer la même salle si leurs créneaux se chevauchent.
+        Vérifie si demande1 et demande2 se chevauchent en comparant les heures de début et de fin.
+
+    Contrainte 3 : Capacité de Salle
+
+python
+
+    for demande in demandes:
+        for salle in salles:
+            model += x[(demande.id, salle.id)] <= (salle.capacite_max >= demande.effectif)
+
+    Assure que chaque salle assignée à une entité a une capacité suffisante pour accueillir son effectif.
+
+Résolution du Modèle
+
+python
+
+    model.solve()
+
+    Cette ligne appelle la méthode de résolution de PuLP pour trouver la meilleure solution possible au problème défini.
+
+Vérification et Stockage des Résultats
+
+python
+
+    if model.status == pulp.LpStatusOptimal:
+        attribution_result = {}
+        for demande in demandes:
+            for salle in salles:
+                if pulp.value(x[(demande.id, salle.id)]) == 1:
+                    attribution_result[demande] = salle
+
+    Vérifie si le statut du modèle indique une solution optimale.
+    Si oui, un dictionnaire attribution_result est créé pour stocker les affectations de salles.
+    Parcourt les demandes et les salles, et pour chaque variable x, si sa valeur est 1, l'entité est assignée à la salle correspondante.
+
+Retour des Résultats
+
+python
+
+        return attribution_result
+    else:
+        raise Exception("Pas de solution optimale trouvée pour l'affectation des salles.")
+
+    Si une solution optimale a été trouvée, le dictionnaire d'attributions est retourné.
+    Si aucune solution n'est trouvée, une exception est levée.
